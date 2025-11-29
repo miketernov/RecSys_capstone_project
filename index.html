@@ -8,22 +8,20 @@
 </head>
 <body>
 
-    <h1>🔍 Offline Recipe Recommender</h1>
+<h1>🔍 Offline Recipe Recommender</h1>
 
-    <input id="ingredientsInput" placeholder="tomato, cheese">
+<input id="ingredientsInput" placeholder="tomato, cheese">
+<button id="searchBtn">Find Recipes</button>
 
-    <button id="searchBtn">Find Recipes</button>
+<p id="loading"></p>
+<p id="progress"></p>
+<div id="results"></div>
 
-    <p id="loading"></p>
-    <p id="progress"></p>
+<!-- LOAD PROPER TRANSFORMERS VERSION -->
+<script src="https://cdn.jsdelivr.net/npm/@xenova/transformers@2.5.0/dist/transformers.min.js"></script>
 
-    <div id="results"></div>
-
-    <!-- LOAD TRANSFORMERS FIRST -->
-    <script src="https://cdn.jsdelivr.net/npm/@xenova/transformers@2.6.1/dist/transformers.min.js"></script>
-
-    <!-- THEN YOUR APP -->
-    <script src="app.js"></script>
+<!-- YOUR SCRIPT (NO MODULE!) -->
+<script src="app.js"></script>
 
 </body>
 </html>
