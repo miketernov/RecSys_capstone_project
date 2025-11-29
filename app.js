@@ -1,112 +1,174 @@
+// =====================================
+// CONFIG
+// =====================================
 const TOTAL_CHUNKS = 17;
-
 let recipes = [];
-let loaded = false;
+let vocabulary = new Map();   // word → index
+let idf = [];                 // idf vector
+let dim = 0;
+let tfidfRecipes = [];        // TF-IDF vectors for recipes
 
-const loadDiv = document.getElementById("loading");
-const progressDiv = document.getElementById("progress");
+const loading = document.getElementById("loading");
+const progress = document.getElementById("progress");
 
-// Load JSON chunks
+// =====================================
+// 1) LOAD RECIPES
+// =====================================
 async function loadChunks() {
-    if (loaded) return recipes;
+    if (recipes.length > 0) return recipes;
 
     let all = [];
     for (let i = 1; i <= TOTAL_CHUNKS; i++) {
-        progressDiv.textContent = `Loading chunk ${i}/${TOTAL_CHUNKS}…`;
+        progress.textContent = `Loading chunk ${i}/${TOTAL_CHUNKS}…`;
         const chunk = await fetch(`chunks/part${i}.json`).then(r => r.json());
         all.push(...chunk);
     }
 
-    progressDiv.textContent = "";
-    loaded = true;
     recipes = all;
-
-    console.log("Loaded recipes:", recipes.length);
+    progress.textContent = "";
     return recipes;
 }
 
-// TEXT → VECTOR (simple bag-of-words)
-function textToVector(text) {
-    const words = text.toLowerCase().split(/[\s,]+/);
-    const vec = {};
+// =====================================
+// 2) BUILD VOCABULARY
+// =====================================
+function buildVocabulary(data) {
+    const vocabSet = new Set();
 
-    for (const w of words) {
-        if (!w) continue;
-        vec[w] = (vec[w] || 0) + 1;
-    }
+    data.forEach(r => {
+        r.ingredients.forEach(ing => {
+            const tokens = ing.toLowerCase().split(/[\s,()\/-]+/);
+            for (let t of tokens) {
+                if (t.length > 1) vocabSet.add(t);
+            }
+        });
+    });
+
+    let index = 0;
+    vocabSet.forEach(word => vocabulary.set(word, index++));
+    dim = vocabulary.size;
+
+    console.log("Vocabulary size =", dim);
+}
+
+// =====================================
+// 3) COMPUTE IDF VALUES
+// =====================================
+function computeIDF(data) {
+    const docCount = data.length;
+    idf = new Array(dim).fill(0);
+
+    data.forEach(r => {
+        const docWords = new Set();
+        r.ingredients.forEach(ing => {
+            const tokens = ing.toLowerCase().split(/[\s,()\/-]+/);
+            tokens.forEach(t => {
+                if (vocabulary.has(t)) docWords.add(t);
+            });
+        });
+
+        docWords.forEach(w => {
+            const idx = vocabulary.get(w);
+            idf[idx] += 1;
+        });
+    });
+
+    idf = idf.map(df => Math.log((docCount + 1) / (df + 1)) + 1);
+}
+
+// =====================================
+// 4) TF-IDF FOR ONE DOCUMENT
+// =====================================
+function tfidfVector(ingredients) {
+    const vec = new Array(dim).fill(0);
+
+    const freq = new Map();
+    ingredients.forEach(ing => {
+        const tokens = ing.toLowerCase().split(/[\s,()\/-]+/);
+        for (let t of tokens) {
+            if (vocabulary.has(t)) {
+                freq.set(t, (freq.get(t) || 0) + 1);
+            }
+        }
+    });
+
+    freq.forEach((count, word) => {
+        const idx = vocabulary.get(word);
+        vec[idx] = count * idf[idx];
+    });
 
     return vec;
 }
 
-// Cosine similarity between bag-of-words and recipe embedding
-function cosineBoW(userVec, recipeEmbedding) {
-    // Convert user BoW to recipe embedding dimension
-    const dim = recipeEmbedding.length;
-    const arr = new Array(dim).fill(0);
+// =====================================
+// 5) BUILD TF-IDF FOR ALL RECIPES
+// =====================================
+function buildTFIDF(data) {
+    tfidfRecipes = data.map(r => tfidfVector(r.ingredients));
+    console.log("Built TF-IDF recipe vectors.");
+}
 
-    let idx = 0;
-    for (const key in userVec) {
-        // deterministic pseudo-hash to place word into vector
-        const hashedIndex = Math.abs(hashString(key)) % dim;
-        arr[hashedIndex] = userVec[key];
-        idx++;
-    }
-
-    // Now cosine similarity
+// =====================================
+// Cosine similarity
+// =====================================
+function cosine(a, b) {
     let dot = 0, na = 0, nb = 0;
-
-    for (let i = 0; i < dim; i++) {
-        const a = arr[i];
-        const b = recipeEmbedding[i];
-
-        dot += a * b;
-        na += a * a;
-        nb += b * b;
+    for (let i = 0; i < a.length; i++) {
+        dot += a[i] * b[i];
+        na += a[i] * a[i];
+        nb += b[i] * b[i];
     }
-
     if (na === 0 || nb === 0) return 0;
     return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
-function hashString(str) {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-        hash = (hash * 31 + str.charCodeAt(i)) | 0;
-    }
-    return hash;
-}
-
+// =====================================
+// MAIN SEARCH
+// =====================================
 async function recommend() {
-    const text = document.getElementById("ingredientsInput").value.trim();
-    if (!text) return;
+    const txt = document.getElementById("ingredientsInput").value.trim();
+    if (!txt) return;
 
-    loadDiv.textContent = "Loading recipes...";
-    const list = await loadChunks();
+    loading.textContent = "Building TF-IDF…";
 
-    loadDiv.textContent = "Computing similarity…";
+    const userIngredients = txt.split(/[\s,]+/);
+    const userVec = tfidfVector(userIngredients);
 
-    // 1. encode user text
-    const userVec = textToVector(text);
+    const scores = recipes.map((r, idx) => ({
+        recipe: r,
+        score: cosine(userVec, tfidfRecipes[idx])
+    }));
 
-    // 2. compute score against MiniLM recipe embeddings
-    list.forEach(r => {
-        r.score = cosineBoW(userVec, r.embedding);
-    });
+    const top = scores.sort((a, b) => b.score - a.score).slice(0, 3);
 
-    // 3. sort
-    const top = list.sort((a,b) => b.score - a.score).slice(0,3);
-
-    // render
-    document.getElementById("results").innerHTML =
-        top.map(r => `
+    document.getElementById("results").innerHTML = top.map(x => `
         <div class="recipe-card">
-            <h3>${r.cuisine.toUpperCase()}</h3>
-            <b>Score:</b> ${r.score.toFixed(4)}<br>
-            <b>Ingredients:</b> ${r.ingredients.join(", ")}
+            <h3>${x.recipe.cuisine.toUpperCase()}</h3>
+            <b>Score:</b> ${x.score.toFixed(4)}<br>
+            <b>Ingredients:</b> ${x.recipe.ingredients.join(", ")}
         </div>
     `).join("");
 
-    loadDiv.textContent = "";
+    loading.textContent = "";
 }
+
+// =====================================
+// INIT PIPELINE
+// =====================================
+async function init() {
+    const data = await loadChunks();
+
+    loading.textContent = "Building vocabulary…";
+    buildVocabulary(data);
+
+    loading.textContent = "Computing IDF…";
+    computeIDF(data);
+
+    loading.textContent = "Building TF-IDF vectors…";
+    buildTFIDF(data);
+
+    loading.textContent = "Ready ✔";
+}
+init();
 
 document.getElementById("searchBtn").onclick = recommend;
