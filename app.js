@@ -38,7 +38,7 @@ function cosine(a, b) {
 // =============================
 // LOAD JSON CHUNKS SEQUENTIALLY
 // =============================
-const TOTAL_CHUNKS = 16;   // <--- Поставь своё количество
+const TOTAL_CHUNKS = 17;   // <--- Поставь своё количество
 
 async function loadChunks() {
   let allRecipes = [];
