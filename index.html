@@ -1,26 +1,29 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Offline Recipe Recommender</title>
-  <link rel="stylesheet" href="style.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Offline Recipe Recommender</title>
+    <link rel="stylesheet" href="style.css">
 </head>
-
 <body>
-  <div class="container">
+
     <h1>🔍 Offline Recipe Recommender</h1>
 
-    <input id="ingredientsInput" placeholder="Enter ingredients…" />
+    <input id="ingredientsInput" placeholder="tomato, cheese">
+
     <button id="searchBtn">Find Recipes</button>
 
-    <div id="loading">Loading model…</div>
-
-    <div id="progress" style="margin-top: 10px; font-size: 14px; color: #666;"></div>
+    <p id="loading"></p>
+    <p id="progress"></p>
 
     <div id="results"></div>
-  </div>
 
-  <script type="module" src="app.js"></script>
+    <!-- LOAD TRANSFORMERS FIRST -->
+    <script src="https://cdn.jsdelivr.net/npm/@xenova/transformers@2.6.1/dist/transformers.min.js"></script>
+
+    <!-- THEN YOUR APP -->
+    <script src="app.js"></script>
+
 </body>
 </html>
