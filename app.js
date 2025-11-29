@@ -1,103 +1,104 @@
-const MODEL_ID = "Xenova/all-MiniLM-L6-v2";
 const TOTAL_CHUNKS = 17;
 
-let embedder = null;
 let recipes = [];
-let modelReady = false;
+let loaded = false;
 
-const loadingDiv = document.getElementById("loading");
+const loadDiv = document.getElementById("loading");
 const progressDiv = document.getElementById("progress");
 
-async function initModel() {
-    loadingDiv.textContent = "Loading MiniLM model… (~10–20 sec)";
+// Load JSON chunks
+async function loadChunks() {
+    if (loaded) return recipes;
 
-    // pipeline теперь точно доступен
-    embedder = await window.transformers.pipeline(
-        "feature-extraction",
-        MODEL_ID
-    );
+    let all = [];
+    for (let i = 1; i <= TOTAL_CHUNKS; i++) {
+        progressDiv.textContent = `Loading chunk ${i}/${TOTAL_CHUNKS}…`;
+        const chunk = await fetch(`chunks/part${i}.json`).then(r => r.json());
+        all.push(...chunk);
+    }
 
-    modelReady = true;
-    loadingDiv.textContent = "Model loaded ✔";
+    progressDiv.textContent = "";
+    loaded = true;
+    recipes = all;
+
+    console.log("Loaded recipes:", recipes.length);
+    return recipes;
 }
-initModel();
 
-function cosine(a, b) {
-    if (!a || !b || a.length !== b.length) return 0;
+// TEXT → VECTOR (simple bag-of-words)
+function textToVector(text) {
+    const words = text.toLowerCase().split(/[\s,]+/);
+    const vec = {};
 
+    for (const w of words) {
+        if (!w) continue;
+        vec[w] = (vec[w] || 0) + 1;
+    }
+
+    return vec;
+}
+
+// Cosine similarity between bag-of-words and recipe embedding
+function cosineBoW(userVec, recipeEmbedding) {
+    // Convert user BoW to recipe embedding dimension
+    const dim = recipeEmbedding.length;
+    const arr = new Array(dim).fill(0);
+
+    let idx = 0;
+    for (const key in userVec) {
+        // deterministic pseudo-hash to place word into vector
+        const hashedIndex = Math.abs(hashString(key)) % dim;
+        arr[hashedIndex] = userVec[key];
+        idx++;
+    }
+
+    // Now cosine similarity
     let dot = 0, na = 0, nb = 0;
 
-    for (let i = 0; i < a.length; i++) {
-        const x = Number.isFinite(a[i]) ? a[i] : 0;
-        const y = Number.isFinite(b[i]) ? b[i] : 0;
+    for (let i = 0; i < dim; i++) {
+        const a = arr[i];
+        const b = recipeEmbedding[i];
 
-        dot += x * y;
-        na += x * x;
-        nb += y * y;
+        dot += a * b;
+        na += a * a;
+        nb += b * b;
     }
 
     if (na === 0 || nb === 0) return 0;
     return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
-async function loadChunks() {
-    if (recipes.length > 0) return recipes;
-
-    let all = [];
-    for (let i = 1; i <= TOTAL_CHUNKS; i++) {
-        progressDiv.textContent = `Loading chunk ${i}/${TOTAL_CHUNKS}…`;
-
-        const chunk = await fetch(`chunks/part${i}.json`).then(r => r.json());
-
-        chunk.forEach(r => {
-            r.embedding = r.embedding.map(v =>
-                Number.isFinite(v) ? v : 0
-            );
-        });
-
-        all.push(...chunk);
+function hashString(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        hash = (hash * 31 + str.charCodeAt(i)) | 0;
     }
-
-    progressDiv.textContent = "";
-    recipes = all;
-    return recipes;
-}
-
-async function embedText(text) {
-    const out = await embedder(text, {
-        pooling: "mean",
-        normalize: true,
-    });
-
-    let vec = Array.from(out.data[0]);
-    vec = vec.map(v => Number.isFinite(v) ? v : 0);
-
-    return vec;
+    return hash;
 }
 
 async function recommend() {
-    if (!modelReady) {
-        alert("Model still loading… wait 5–10 seconds");
-        return;
-    }
-
     const text = document.getElementById("ingredientsInput").value.trim();
     if (!text) return;
 
-    loadingDiv.textContent = "Embedding your ingredients…";
-    const userEmbedding = await embedText(text);
+    loadDiv.textContent = "Loading recipes...";
+    const list = await loadChunks();
 
-    loadingDiv.textContent = "Loading recipes…";
-    const data = await loadChunks();
+    loadDiv.textContent = "Computing similarity…";
 
-    loadingDiv.textContent = "Computing similarity…";
-    data.forEach(r => {
-        r.score = cosine(userEmbedding, r.embedding);
+    // 1. encode user text
+    const userVec = textToVector(text);
+
+    // 2. compute score against MiniLM recipe embeddings
+    list.forEach(r => {
+        r.score = cosineBoW(userVec, r.embedding);
     });
 
-    const top = data.sort((a, b) => b.score - a.score).slice(0, 3);
+    // 3. sort
+    const top = list.sort((a,b) => b.score - a.score).slice(0,3);
 
-    document.getElementById("results").innerHTML = top.map(r => `
+    // render
+    document.getElementById("results").innerHTML =
+        top.map(r => `
         <div class="recipe-card">
             <h3>${r.cuisine.toUpperCase()}</h3>
             <b>Score:</b> ${r.score.toFixed(4)}<br>
@@ -105,7 +106,7 @@ async function recommend() {
         </div>
     `).join("");
 
-    loadingDiv.textContent = "";
+    loadDiv.textContent = "";
 }
 
 document.getElementById("searchBtn").onclick = recommend;
