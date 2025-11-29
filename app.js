@@ -1,30 +1,26 @@
 // ======================================================
-// IMPORT TRANSFORMERS.JS
+// CONFIG
 // ======================================================
-import { pipeline } from "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.6.1";
+
+const MODEL_ID = "Xenova/all-MiniLM-L6-v2";   // используем ту же модель, что и в Colab
+const TOTAL_CHUNKS = 17;                     // <-- поставь твоё количество partN.json
+
+let embedder = null;
+let recipes = [];
+let modelReady = false;
 
 const loadingDiv = document.getElementById("loading");
 const progressDiv = document.getElementById("progress");
-
-// Модель SentenceTransformer, с которой совпадают твои эмбеддинги
-const MODEL_ID = "Xenova/all-MiniLM-L6-v2";
-
-// Количество JSON-чанков (исправь под своё число)
-const TOTAL_CHUNKS = 17;
-
-let embedder;
-let modelReady = false;
-let recipes = [];
-
 
 
 // ======================================================
 // LOAD MODEL
 // ======================================================
-async function initModel() {
-    loadingDiv.textContent = "Loading embedding model… (~10–20 sec)";
 
-    embedder = await pipeline(
+async function initModel() {
+    loadingDiv.textContent = "Loading MiniLM model… (~10–20 sec)";
+
+    embedder = await window.transformers.pipeline(
         "feature-extraction",
         MODEL_ID
     );
@@ -36,16 +32,19 @@ async function initModel() {
 initModel();
 
 
-
 // ======================================================
 // SAFE COSINE SIMILARITY
 // ======================================================
+
 function cosine(a, b) {
+    if (!a || !b || a.length !== b.length) return 0;
+
     let dot = 0, na = 0, nb = 0;
 
     for (let i = 0; i < a.length; i++) {
         const x = Number.isFinite(a[i]) ? a[i] : 0;
         const y = Number.isFinite(b[i]) ? b[i] : 0;
+
         dot += x * y;
         na += x * x;
         nb += y * y;
@@ -57,10 +56,10 @@ function cosine(a, b) {
 }
 
 
+// ======================================================
+// LOAD CHUNKS + CLEAN NAN
+// ======================================================
 
-// ======================================================
-// LOAD CHUNKS (WITH NAN-CLEANING)
-// ======================================================
 async function loadChunks() {
     if (recipes.length > 0) return recipes;
 
@@ -71,8 +70,8 @@ async function loadChunks() {
 
         const chunk = await fetch(`chunks/part${i}.json`).then(r => r.json());
 
-        // Clean NaN from embeddings
         chunk.forEach(r => {
+            // Чистим nan / null / undefined
             r.embedding = r.embedding.map(v =>
                 Number.isFinite(v) ? v : 0
             );
@@ -82,39 +81,40 @@ async function loadChunks() {
     }
 
     progressDiv.textContent = "";
-    recipes = all;
 
+    recipes = all;
     console.log("Loaded recipes:", recipes.length);
     return recipes;
 }
 
 
+// ======================================================
+// EMBED TEXT (WITH NAN CLEANING)
+// ======================================================
 
-// ======================================================
-// EMBED USER INPUT (WITH NAN-CLEANING)
-// ======================================================
 async function embedText(text) {
-    const output = await embedder(text, {
+    const out = await embedder(text, {
         pooling: "mean",
         normalize: true,
     });
 
-    let vec = Array.from(output.data[0]);
+    // out.data[0] = Float32Array
+    let vec = Array.from(out.data[0]);
 
-    // Clean NaN from user embedding
+    // чистим
     vec = vec.map(v => Number.isFinite(v) ? v : 0);
 
     return vec;
 }
 
 
+// ======================================================
+// MAIN RECOMMENDER
+// ======================================================
 
-// ======================================================
-// MAIN RECOMMEND FUNCTION
-// ======================================================
 async function recommend() {
     if (!modelReady) {
-        alert("Model is still loading…");
+        alert("Model still loading… wait 5–10 seconds");
         return;
     }
 
@@ -122,40 +122,36 @@ async function recommend() {
     if (!text) return;
 
     loadingDiv.textContent = "Embedding your ingredients…";
-
     const userEmbedding = await embedText(text);
 
     loadingDiv.textContent = "Loading recipes…";
+    const data = await loadChunks();
 
-    const recipesList = await loadChunks();
+    loadingDiv.textContent = "Computing similarity…";
 
-    loadingDiv.textContent = "Calculating similarity…";
-
-    // Compute scores
-    recipesList.forEach(r => {
+    data.forEach(r => {
         r.score = cosine(userEmbedding, r.embedding);
     });
 
-    // Sort and take top 3
-    const top = recipesList
+    const top = data
         .sort((a, b) => b.score - a.score)
         .slice(0, 3);
 
-    // Render UI
-    document.getElementById("results").innerHTML = top.map(r => `
-        <div class="recipe-card">
-            <h3>${r.cuisine.toUpperCase()}</h3>
-            <b>Score:</b> ${r.score.toFixed(4)}<br>
-            <b>Ingredients:</b> ${r.ingredients.join(", ")}
-        </div>
-    `).join("");
+    document.getElementById("results").innerHTML =
+        top.map(r => `
+            <div class="recipe-card">
+                <h3>${r.cuisine.toUpperCase()}</h3>
+                <b>Score:</b> ${r.score.toFixed(4)}<br>
+                <b>Ingredients:</b> ${r.ingredients.join(", ")}
+            </div>
+        `).join("");
 
     loadingDiv.textContent = "";
 }
 
 
+// ======================================================
+// BUTTON
+// ======================================================
 
-// ======================================================
-// BUTTON HANDLER
-// ======================================================
 document.getElementById("searchBtn").onclick = recommend;
