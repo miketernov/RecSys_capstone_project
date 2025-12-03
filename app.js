@@ -60,14 +60,16 @@ async function loadModel() {
 // TOKENIZATION
 // ======================================
 function tokenize(text) {
-    const vocab = tokenizer.vocab;
+    // корректный путь к словарю
+    const vocab = tokenizer.model.vocab;
 
     const CLS = vocab["[CLS]"];
     const SEP = vocab["[SEP]"];
     const UNK = vocab["[UNK]"];
 
-    if (!CLS || !SEP || !UNK) {
-        console.error("Tokenizer error: CLS/SEP/UNK missing");
+    if (CLS === undefined || SEP === undefined || UNK === undefined) {
+        console.error("Tokenizer is loaded, but CLS/SEP/UNK are not found");
+        console.log("Available keys:", Object.keys(vocab).slice(0,20));
     }
 
     const tokens = text
