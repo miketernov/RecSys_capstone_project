@@ -8,16 +8,23 @@
 </head>
 <body>
 
-<h1>🔍 Offline Recipe Recommender</h1>
+<div class="container">
+    <h1>🔍 Offline Recipe Recommender</h1>
 
-<input id="ingredientsInput" placeholder="tomato, cheese">
-<button id="searchBtn">Find Recipes</button>
+    <input id="ingredientsInput"
+           placeholder="tomato, cheese, basil or write: I have tomato and cheese, no meat">
+    <button id="searchBtn">Find Recipes</button>
 
-<p id="loading"></p>
-<p id="progress"></p>
-<div id="results"></div>
+    <p id="loading"></p>
+    <p id="progress"></p>
 
-<script src="https://cdn.jsdelivr.net/npm/@xenova/transformers@2.8.0/dist/transformers.umd.min.js"></script>
+    <div id="results"></div>
+</div>
+
+<!-- LLM в браузере: all-MiniLM-L6-v2 через transformers.js -->
+<script src="https://cdn.jsdelivr.net/npm/@xenova/transformers@3.2.2/dist/transformers.min.js"></script>
+
+<!-- Твой код приложения -->
 <script src="app.js"></script>
 
 </body>
