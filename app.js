@@ -5,7 +5,7 @@
 // Модель (model.onnx) лежит в GitHub Release
 // !!! ЗАМЕНИ на свой URL !!!
 const MODEL_URL =
-  "https://github.com/<user>/<repo>/releases/download/v1/model.onnx";
+  "https://github.com/miketernov/RecSys_capstone_project/releases/download/v1/model.onnx";
 
 // Эти файлы лежат внутри репозитория в папке /model/
 const TOKENIZER_URL = "model/tokenizer.json";
