@@ -30,9 +30,7 @@ async function loadONNXRuntime() {
       console.log("ONNX Runtime loaded via ES module ✔");
       return ort;
     }
-  } catch (e) {
-    console.warn("ES module load failed, fallback to script");
-  }
+  } catch {}
 
   return new Promise((resolve, reject) => {
     const script = document.createElement("script");
@@ -105,9 +103,7 @@ async function loadChunks() {
       recipes = await fetch(RECIPES_FILE).then((r) => r.json());
       console.log("Recipes loaded from single file ✔");
       return;
-    } catch {
-      console.warn("Single file failed, fallback to chunks");
-    }
+    } catch {}
   }
 
   progress.textContent = "Loading recipe chunks…";
@@ -173,31 +169,89 @@ function cosine(a, b) {
 }
 
 // =====================================
-// IMAGES (TheMealDB + fallback)
+// THEMEALDB – FULL RECIPE
 // =====================================
-async function fetchMealImage(query) {
-  try {
-    const res = await fetch(
-      `https://www.themealdb.com/api/json/v1/1/search.php?s=${encodeURIComponent(
-        query
-      )}`
-    );
-    const data = await res.json();
-    return data.meals?.[0]?.strMealThumb || null;
-  } catch {
-    return null;
-  }
+async function fetchFullRecipe(query) {
+  const res = await fetch(
+    `https://www.themealdb.com/api/json/v1/1/search.php?s=${encodeURIComponent(
+      query
+    )}`
+  );
+  const data = await res.json();
+  return data.meals?.[0] || null;
 }
 
-async function getRecipeImage(recipe) {
-  let img = await fetchMealImage(recipe.cuisine);
-  if (!img && recipe.ingredients?.length) {
-    img = await fetchMealImage(recipe.ingredients[0]);
+function extractIngredients(meal) {
+  const list = [];
+  for (let i = 1; i <= 20; i++) {
+    const ing = meal[`strIngredient${i}`];
+    const meas = meal[`strMeasure${i}`];
+    if (ing && ing.trim()) {
+      list.push(`${meas} ${ing}`);
+    }
   }
-  if (!img) {
-    img = `https://source.unsplash.com/400x300/?${recipe.cuisine},food`;
+  return list;
+}
+
+// =====================================
+// SHOW FULL RECIPE
+// =====================================
+async function showRecipe(query) {
+  loading.textContent = "Loading full recipe…";
+  const meal = await fetchFullRecipe(query);
+
+  if (!meal) {
+    loading.textContent = "Recipe not found";
+    return;
   }
-  return img;
+
+  const ingredients = extractIngredients(meal);
+
+  results.innerHTML = `
+    <div class="recipe-card">
+      <img src="${meal.strMealThumb}">
+      <div class="card-body">
+        <h2>${meal.strMeal}</h2>
+
+        <h4>Ingredients</h4>
+        <ul>
+          ${ingredients.map((i) => `<li>${i}</li>`).join("")}
+        </ul>
+
+        <h4>Instructions</h4>
+        <p>${meal.strInstructions}</p>
+
+        <button onclick="renderResults()">← Back</button>
+      </div>
+    </div>
+  `;
+
+  loading.textContent = "";
+}
+
+// =====================================
+// RENDER SEARCH RESULTS
+// =====================================
+let lastResults = [];
+
+function renderResults() {
+  results.innerHTML = "";
+
+  for (const x of lastResults) {
+    results.innerHTML += `
+      <div class="recipe-card">
+        <img src="${x.img}">
+        <div class="card-body">
+          <h3>${x.recipe.cuisine.toUpperCase()}</h3>
+          <p class="score">Similarity: ${x.score.toFixed(4)}</p>
+          <p class="ingredients">${x.recipe.ingredients.join(", ")}</p>
+          <button onclick="showRecipe('${x.recipe.cuisine}')">
+            Show full recipe
+          </button>
+        </div>
+      </div>
+    `;
+  }
 }
 
 // =====================================
@@ -235,22 +289,16 @@ async function recommend() {
 
   const top = scored.sort((a, b) => b.score - a.score).slice(0, topN);
 
-  results.innerHTML = "";
+  lastResults = [];
 
   for (const x of top) {
-    const img = await getRecipeImage(x.recipe);
-    results.innerHTML += `
-      <div class="recipe-card">
-        <img src="${img}" alt="Recipe image">
-        <div class="card-body">
-          <h3>${x.recipe.cuisine.toUpperCase()}</h3>
-          <p class="score">Similarity: ${x.score.toFixed(4)}</p>
-          <p class="ingredients">${x.recipe.ingredients.join(", ")}</p>
-        </div>
-      </div>
-    `;
+    lastResults.push({
+      ...x,
+      img: `https://source.unsplash.com/400x300/?${x.recipe.cuisine},food`,
+    });
   }
 
+  renderResults();
   loading.textContent = "";
 }
 
