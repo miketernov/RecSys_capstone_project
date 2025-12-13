@@ -294,7 +294,7 @@ async function recommend() {
   for (const x of top) {
     lastResults.push({
       ...x,
-      img: `https://source.unsplash.com/400x300/?${x.recipe.cuisine},food`,
+      img: `https://picsum.photos/400/300?random=${Math.random()}`,
     });
   }
 
@@ -325,3 +325,8 @@ async function init() {
 
 document.getElementById("searchBtn").onclick = recommend;
 init();
+
+// expose functions to global scope for inline handlers
+window.showRecipe = showRecipe;
+window.renderResults = renderResults;
+
