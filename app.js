@@ -1,11 +1,18 @@
-// =====================================
-// CONFIG
-// =====================================
+// ================= CONFIG =================
 const TOTAL_CHUNKS = 17;
 const USE_SINGLE_FILE = true;
 const RECIPES_FILE = "recipes_all.json";
 const ONNX_URL =
   "https://huggingface.co/iammik3e/recsys-minilm/resolve/main/model.onnx";
+
+const DIET_EXCLUSIONS = {
+  vegetarian: ["chicken", "beef", "pork", "fish", "meat", "bacon", "ham"],
+  vegan: [
+    "meat", "chicken", "beef", "fish",
+    "milk", "cheese", "egg", "butter", "cream"
+  ],
+  nopork: ["pork", "bacon", "ham"]
+};
 
 let recipes = [];
 let session = null;
@@ -17,316 +24,145 @@ const loading = document.getElementById("loading");
 const progress = document.getElementById("progress");
 const results = document.getElementById("results");
 
-// =====================================
-// LOAD ONNX RUNTIME (SAFE)
-// =====================================
+// ================= ONNX RUNTIME =================
 async function loadONNXRuntime() {
   try {
-    const ortModule = await import(
-      "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/ort.wasm.min.js"
-    );
-    ort = ortModule.default || ortModule;
-    if (ort?.InferenceSession) {
-      console.log("ONNX Runtime loaded via ES module ✔");
-      return ort;
-    }
+    const m = await import("https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/ort.wasm.min.js");
+    ort = m.default || m;
+    if (ort?.InferenceSession) return ort;
   } catch {}
 
   return new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src =
-      "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/ort.wasm.min.js";
-    script.onload = () => {
-      if (window.ort) {
-        ort = window.ort;
-        console.log("ONNX Runtime loaded via script ✔");
-        resolve(ort);
-      } else reject(new Error("ORT not found"));
-    };
-    script.onerror = reject;
-    document.head.appendChild(script);
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/ort.wasm.min.js";
+    s.onload = () => window.ort ? resolve(window.ort) : reject();
+    document.head.appendChild(s);
   });
 }
 
-// =====================================
-// TOKENIZER
-// =====================================
+// ================= TOKENIZER =================
 async function loadTokenizer() {
-  const text = await fetch("model/vocab.txt").then((r) => r.text());
+  const text = await fetch("model/vocab.txt").then(r => r.text());
   const vocab = {};
-  text.split("\n").forEach((t, i) => (vocab[t.trim()] = i));
+  text.split("\n").forEach((t, i) => vocab[t.trim()] = i);
   tokenizer = { vocab };
 }
 
 function tokenize(text) {
   text = text.toLowerCase().replace(/[^a-z0-9 ]+/g, " ");
   const tokens = text.split(" ").filter(Boolean);
-  const ids = tokens.map(
-    (t) => tokenizer.vocab[t] ?? tokenizer.vocab["[UNK]"]
-  );
+  const ids = tokens.map(t => tokenizer.vocab[t] ?? tokenizer.vocab["[UNK]"]);
   const cls = tokenizer.vocab["[CLS]"] ?? 0;
-  const final = [cls, ...ids].slice(0, 128);
-  return { ids: final, len: final.length };
+  return { ids: [cls, ...ids].slice(0,128), len: Math.min(ids.length+1,128) };
 }
 
 function makeTensor(ids) {
   const arr = new BigInt64Array(128);
-  ids.forEach((v, i) => (arr[i] = BigInt(v)));
-  return new ort.Tensor("int64", arr, [1, 128]);
+  ids.forEach((v,i)=>arr[i]=BigInt(v));
+  return new ort.Tensor("int64", arr, [1,128]);
 }
 
-// =====================================
-// LOAD MODEL
-// =====================================
-async function loadOnnxModel() {
-  if (!ort) await loadONNXRuntime();
-  if (!ort.InferenceSession && ort.default?.InferenceSession) {
-    ort = ort.default;
-  }
-  if (!ort.InferenceSession)
-    throw new Error("InferenceSession not available");
-
-  session = await ort.InferenceSession.create(ONNX_URL, {
-    executionProviders: ["wasm"],
-  });
-  console.log("MiniLM loaded ✔");
+// ================= MODEL =================
+async function loadModel() {
+  ort = await loadONNXRuntime();
+  session = await ort.InferenceSession.create(ONNX_URL, { executionProviders:["wasm"] });
 }
 
-// =====================================
-// LOAD RECIPES
-// =====================================
+// ================= DATA =================
 async function loadChunks() {
-  if (recipes.length) return;
-
   if (USE_SINGLE_FILE) {
     try {
-      recipes = await fetch(RECIPES_FILE).then((r) => r.json());
-      console.log("Recipes loaded from single file ✔");
+      recipes = await fetch(RECIPES_FILE).then(r=>r.json());
       return;
     } catch {}
   }
-
-  progress.textContent = "Loading recipe chunks…";
-  const promises = [];
-  for (let i = 1; i <= TOTAL_CHUNKS; i++) {
-    promises.push(
-      fetch(`chunks/part${i}.json`)
-        .then((r) => r.json())
-        .catch(() => [])
-    );
-  }
-  recipes = (await Promise.all(promises)).flat();
-  progress.textContent = "";
+  const parts = await Promise.all(
+    Array.from({length:TOTAL_CHUNKS},(_,i)=>
+      fetch(`chunks/part${i+1}.json`).then(r=>r.json()).catch(()=>[])
+    )
+  );
+  recipes = parts.flat();
 }
 
-// =====================================
-// EMBEDDING
-// =====================================
+// ================= EMBEDDING =================
 async function embed(text) {
-  const tok = tokenize("Ingredients: " + text);
-  const input_ids = makeTensor(tok.ids);
-
+  const tok = tokenize("Ingredients: "+text);
   const mask = new BigInt64Array(128);
-  for (let i = 0; i < tok.len; i++) mask[i] = 1n;
+  for(let i=0;i<tok.len;i++) mask[i]=1n;
 
-  const outputs = await session.run({
-    input_ids,
-    attention_mask: new ort.Tensor("int64", mask, [1, 128]),
-    token_type_ids: new ort.Tensor(
-      "int64",
-      new BigInt64Array(128),
-      [1, 128]
-    ),
+  const out = await session.run({
+    input_ids: makeTensor(tok.ids),
+    attention_mask: new ort.Tensor("int64",mask,[1,128]),
+    token_type_ids: new ort.Tensor("int64",new BigInt64Array(128),[1,128])
   });
 
-  const out = outputs[Object.keys(outputs)[0]];
-  const data = out.data;
-  const hidden = out.dims[2];
-
+  const data = out[Object.keys(out)[0]].data;
+  const hidden = out[Object.keys(out)[0]].dims[2];
   const emb = new Array(hidden).fill(0);
-  for (let i = 0; i < hidden; i++) {
-    for (let j = 0; j < tok.len; j++) {
-      emb[i] += data[j * hidden + i];
-    }
-    emb[i] /= tok.len;
+
+  for(let i=0;i<hidden;i++){
+    for(let j=0;j<tok.len;j++) emb[i]+=data[j*hidden+i];
+    emb[i]/=tok.len;
   }
   return emb;
 }
 
-// =====================================
-// SIMILARITY
-// =====================================
-function cosine(a, b) {
-  let dot = 0,
-    na = 0,
-    nb = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    na += a[i] * a[i];
-    nb += b[i] * b[i];
-  }
-  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+// ================= UTILS =================
+function cosine(a,b){
+  let d=0,na=0,nb=0;
+  for(let i=0;i<a.length;i++){d+=a[i]*b[i];na+=a[i]*a[i];nb+=b[i]*b[i]}
+  return d/(Math.sqrt(na)*Math.sqrt(nb));
 }
 
-// =====================================
-// THEMEALDB – FULL RECIPE
-// =====================================
-async function fetchFullRecipe(query) {
-  const res = await fetch(
-    `https://www.themealdb.com/api/json/v1/1/search.php?s=${encodeURIComponent(
-      query
-    )}`
-  );
-  const data = await res.json();
-  return data.meals?.[0] || null;
+function getRecipeImage(recipe){
+  const q = recipe.ingredients.slice(0,3).join(" ");
+  return `https://source.unsplash.com/featured/400x300/?food,${encodeURIComponent(q)}`;
 }
 
-function extractIngredients(meal) {
-  const list = [];
-  for (let i = 1; i <= 20; i++) {
-    const ing = meal[`strIngredient${i}`];
-    const meas = meal[`strMeasure${i}`];
-    if (ing && ing.trim()) {
-      list.push(`${meas} ${ing}`);
-    }
-  }
-  return list;
-}
+// ================= SEARCH =================
+async function recommend(){
+  const query = ingredientsInput.value.trim();
+  if(!query) return;
 
-// =====================================
-// SHOW FULL RECIPE
-// =====================================
-async function showRecipe(query) {
-  loading.textContent = "Loading full recipe…";
-  const meal = await fetchFullRecipe(query);
+  let excluded=[];
+  if(dietVegetarian.checked) excluded.push(...DIET_EXCLUSIONS.vegetarian);
+  if(dietVegan.checked) excluded.push(...DIET_EXCLUSIONS.vegan);
+  if(dietNoPork.checked) excluded.push(...DIET_EXCLUSIONS.nopork);
 
-  if (!meal) {
-    loading.textContent = "Recipe not found";
-    return;
-  }
-
-  const ingredients = extractIngredients(meal);
-
-  results.innerHTML = `
-    <div class="recipe-card">
-      <img src="${meal.strMealThumb}">
-      <div class="card-body">
-        <h2>${meal.strMeal}</h2>
-
-        <h4>Ingredients</h4>
-        <ul>
-          ${ingredients.map((i) => `<li>${i}</li>`).join("")}
-        </ul>
-
-        <h4>Instructions</h4>
-        <p>${meal.strInstructions}</p>
-
-        <button onclick="renderResults()">← Back</button>
-      </div>
-    </div>
-  `;
-
-  loading.textContent = "";
-}
-
-// =====================================
-// RENDER SEARCH RESULTS
-// =====================================
-let lastResults = [];
-
-function renderResults() {
-  results.innerHTML = "";
-
-  for (const x of lastResults) {
-    results.innerHTML += `
-      <div class="recipe-card">
-        <img src="${x.img}">
-        <div class="card-body">
-          <h3>${x.recipe.cuisine.toUpperCase()}</h3>
-          <p class="score">Similarity: ${x.score.toFixed(4)}</p>
-          <p class="ingredients">${x.recipe.ingredients.join(", ")}</p>
-          <button onclick="showRecipe('${x.recipe.cuisine}')">
-            Show full recipe
-          </button>
-        </div>
-      </div>
-    `;
-  }
-}
-
-// =====================================
-// MAIN SEARCH
-// =====================================
-async function recommend() {
-  const query = document.getElementById("ingredientsInput").value.trim();
-  if (!query) return;
-
-  const excluded = document
-    .getElementById("excludeInput")
-    .value.toLowerCase()
-    .split(",")
-    .map((x) => x.trim())
-    .filter(Boolean);
-
-  const topN = parseInt(document.getElementById("topN").value);
-
-  loading.textContent = "Encoding ingredients…";
+  loading.textContent="Encoding…";
   const userEmb = await embed(query);
 
-  loading.textContent = "Searching recipes…";
-
-  const filtered = recipes.filter(
-    (r) =>
-      !excluded.some((e) =>
-        r.ingredients.join(" ").toLowerCase().includes(e)
-      )
+  const filtered = recipes.filter(r =>
+    !excluded.some(e => r.ingredients.join(" ").includes(e))
   );
 
-  const scored = filtered.map((r) => ({
-    recipe: r,
-    score: cosine(userEmb, r.embedding),
-  }));
+  const scored = filtered.map(r=>({r,score:cosine(userEmb,r.embedding)}))
+    .sort((a,b)=>b.score-a.score)
+    .slice(0,parseInt(topN.value));
 
-  const top = scored.sort((a, b) => b.score - a.score).slice(0, topN);
-
-  lastResults = [];
-
-  for (const x of top) {
-    lastResults.push({
-      ...x,
-      img: `https://picsum.photos/400/300?random=${Math.random()}`,
-    });
-  }
-
-  renderResults();
-  loading.textContent = "";
+  results.innerHTML="";
+  scored.forEach(x=>{
+    results.innerHTML+=`
+      <div class="recipe-card">
+        <img src="${getRecipeImage(x.r)}">
+        <div class="card-body">
+          <h3>${x.r.cuisine.toUpperCase()}</h3>
+          <div class="score">Similarity: ${x.score.toFixed(4)}</div>
+          <div class="ingredients">${x.r.ingredients.join(", ")}</div>
+        </div>
+      </div>`;
+  });
+  loading.textContent="";
 }
 
-// =====================================
-// INIT
-// =====================================
-async function init() {
-  try {
-    loading.textContent = "Loading tokenizer…";
-    await loadTokenizer();
-
-    loading.textContent = "Loading model…";
-    await loadOnnxModel();
-
-    loading.textContent = "Loading recipes…";
-    await loadChunks();
-
-    loading.textContent = "Ready ✔";
-  } catch (e) {
-    console.error(e);
-    loading.textContent = "Initialization error";
-  }
+// ================= INIT =================
+async function init(){
+  loading.textContent="Loading…";
+  await loadTokenizer();
+  await loadModel();
+  await loadChunks();
+  loading.textContent="Ready ✓";
 }
 
-document.getElementById("searchBtn").onclick = recommend;
+searchBtn.onclick = recommend;
 init();
-
-// expose functions to global scope for inline handlers
-window.showRecipe = showRecipe;
-window.renderResults = renderResults;
-
