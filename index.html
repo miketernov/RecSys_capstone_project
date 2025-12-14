@@ -1,34 +1,31 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Offline Recipe Recommender</title>
-    <link rel="stylesheet" href="style.css">
-
-    <script>
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.getRegistrations().then(regs =>
-                regs.forEach(r => r.unregister())
-            );
-        }
-    </script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Offline Recipe Recommender</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:,">
 </head>
 <body>
 
 <h1>🔍 Offline Recipe Recommender</h1>
 
-<input id="ingredientsInput" placeholder="Enter ingredients (e.g. tomato pasta cheese)">
+<input id="ingredientsInput" placeholder="Enter ingredients (e.g. tomato cheese pasta)">
 
-<input id="excludeInput" placeholder="Exclude ingredients (e.g. meat, chicken, beef)">
+<div class="diet-box">
+  <label><input type="checkbox" id="dietVegetarian"> Vegetarian</label>
+  <label><input type="checkbox" id="dietVegan"> Vegan</label>
+  <label><input type="checkbox" id="dietNoPork"> No pork</label>
+</div>
 
-<label>
-    Number of results:
-    <select id="topN">
-        <option value="3">Top 3</option>
-        <option value="5">Top 5</option>
-        <option value="10">Top 10</option>
-    </select>
+<label class="topn">
+  Number of results:
+  <select id="topN">
+    <option value="3">Top 3</option>
+    <option value="5">Top 5</option>
+    <option value="10">Top 10</option>
+  </select>
 </label>
 
 <button id="searchBtn">Find Recipes</button>
